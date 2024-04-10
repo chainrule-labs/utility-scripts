@@ -1,15 +1,65 @@
-import requests
+from typing import List, Mapping, Tuple
 import time
 from datetime import datetime
+from enum import Enum
+
+import requests
 import numpy as np
 import matplotlib.pyplot as plt
 
 
-def fetch_to_addresses(api_key, start_block, end_block):
+class Chains(str, Enum):
+    ETHEREUM = "ethereum"
+    ARBITRUM = "arbitrum"
+    OPTIMISM = "optimism"
+    BASE = "base"
+    POLYGON = "polygon"
+    BINANCE = "binance"
+    FANTOM = "fantom"
+    GNOSIS = "gnosis"
+
+
+CHAINS = {
+    Chains.ETHEREUM: {
+        "url": "https://api.etherscan.io/api",
+        "api_key": "JQJC8P87GIS8GKAZPAT7P92H634I4HSXMD",
+    },
+    Chains.ARBITRUM: {
+        "url": "https://api.arbiscan.io/api",
+        "api_key": "725U35Z6SEB2WBGXFQHKQUXMU99FNE2UBZ",
+    },
+    Chains.OPTIMISM: {
+        "url": "https://api-optimistic.etherscan.io/api",
+        "api_key": "9UCF9F87E86NQHRTX2XMQR8Q9I3Q7VTNVA",
+    },
+    Chains.BASE: {
+        "url": "https://api.basescan.org/api",
+        "api_key": "QB3F41XXCNDNGPV68H7HS9I7UGQHP89G72",
+    },
+    Chains.POLYGON: {
+        "url": "https://api.polygonscan.com/api",
+        "api_key": "4QU12K8MVP7BHNQ4UHIRQH773VXNKRIR1G",
+    },
+    Chains.BINANCE: {
+        "url": "https://api.bscscan.com/api",
+        "api_key": "MHA537WM3DSQTBC6IR1GBHU1J7U1EXU1GQ",
+    },
+    Chains.FANTOM: {
+        "url": "https://api.ftmscan.com/api",
+        "api_key": "N2K2SKMSJXGWXBW67T4BWWI1IH1N6KPD5U",
+    },
+    Chains.GNOSIS: {
+        "url": "https://api.gnosisscan.io/api",
+        "api_key": "86K19VEPZA6SCZXFC9W13W5ANYDFFQZ728",
+    },
+}
+
+
+def fetch_to_addresses(start_block: int, end_block: int) -> set[str]:
     """
-    Fetches a list of 'to' addresses from the API calls for a given block range.
+    Fetches a list of 'to' addresses on Ethereum from the API calls for a given block range.
     """
-    url = "https://api.etherscan.io/api"
+
     params = {
         "module": "account",
         "action": "tokentx",
@@ -20,30 +70,45 @@ def fetch_to_addresses(api_key, start_block, end_block):
         "startblock": start_block,
         "endblock": end_block,
         "sort": "asc",
-        "apikey": api_key,
+        "apikey": CHAINS[Chains.ETHEREUM]["api_key"],
     }
-    response = requests.get(url, params=params)
+    response = requests.get(CHAINS[Chains.ETHEREUM]["url"], params=params)
     if response.status_code == 200 and response.json()["status"] == "1":
         results = response.json()["result"]
-        return {tx["to"] for tx in results}  # Use a set to ensure uniqueness
-    else:
-        return set()  # Return an empty set if the call fails
+        return {tx["to"] for tx in results}
 
 
-def merge_address_sets(api_key):
+def merge_address_sets() -> set[str]:
     """
-    Merges addresses from two different block ranges into a unique set.
+    Merges addresses from different block ranges into a unique set.
     """
-    addresses_from_first_range = fetch_to_addresses(
-        api_key, 18794474, 18794474
-    )  # New York Hackathon Payouts
-    addresses_from_second_range = fetch_to_addresses(
-        api_key, 18345055, 18345055
-    )  # Istanbul Hackathon Payouts
-    return addresses_from_first_range.union(addresses_from_second_range)
+    # Fetch addresses for each block range
+
+    new_york_2022_addresses = fetch_to_addresses(15200849, 15200849)
+    sf_2022_addresses = fetch_to_addresses(16016081, 16016081)
+    waterloo_addresses = fetch_to_addresses(17770857, 17770857)
+    newyork_2023_addresses = fetch_to_addresses(18794474, 18794474)
+    november13_2023_addresses = fetch_to_addresses(18561031, 18561031)
+    istanbul_addresses = fetch_to_addresses(18345055, 18345055)
+    march20_2024_addresses = fetch_to_addresses(19473113, 19473113)
+
+    # Use set.union to merge all sets together
+    merged_addresses = set.union(
+        new_york_2022_addresses,
+        sf_2022_addresses,
+        waterloo_addresses,
+        newyork_2023_addresses,
+        istanbul_addresses,
+        march20_2024_addresses,
+        november13_2023_addresses,
+    )
+
+    return merged_addresses
 
 
-def fetch_transactions_for_addresses(addresses, api_key):
+def fetch_transactions_for_addresses(
+    addresses: set[str], chain: Chains
+) -> Mapping[str, List[Mapping[str, str]]]:
     """
     Fetches transactions for each address in the provided list with rate limiting.
     """
@@ -52,19 +117,20 @@ def fetch_transactions_for_addresses(addresses, api_key):
     sleep_time = 1 / calls_per_second
 
     for address in addresses:
-        transactions = make_api_call(address, api_key)
+        transactions = make_api_call(address, chain)
         if transactions:
             transactions_per_address[address] = transactions
-        time.sleep(sleep_time)  # Rate limit our requests
+        # Rate limit requests
+        time.sleep(sleep_time)
 
     return transactions_per_address
 
 
-def make_api_call(address, api_key):
+def make_api_call(address: str, chain: Chains) -> List[Mapping[str, str]]:
     """
-    Makes an API call to fetch transactions for a given address.
+    Makes an API call to fetch transactions for a given address on the provided chain.
     """
-    url = "https://api.etherscan.io/api"
+
     params = {
         "module": "account",
         "action": "txlist",
@@ -74,16 +140,14 @@ def make_api_call(address, api_key):
         "page": 1,
         "offset": 1000,
         "sort": "desc",
-        "apikey": api_key,
+        "apikey": CHAINS[chain]["api_key"],
     }
-    response = requests.get(url, params=params)
+    response = requests.get(CHAINS[chain]["url"], params=params)
     if response.status_code == 200 and response.json()["status"] == "1":
         return response.json()["result"]
-    else:
-        return None
 
 
-def calculate_duration_months(start_timestamp, end_timestamp):
+def calculate_duration_months(start_timestamp: str, end_timestamp: str) -> int:
     """Calculate duration in months between two timestamps."""
     start_date = datetime.fromtimestamp(int(start_timestamp))
     end_date = datetime.fromtimestamp(int(end_timestamp))
@@ -92,7 +156,7 @@ def calculate_duration_months(start_timestamp, end_timestamp):
     )
 
 
-def calculate_user_stats(transactions):
+def calculate_user_stats(transactions: List[Mapping[str, str]]) -> Tuple[int, int]:
     """Calculate stats per user based on transactions."""
     if not transactions:
         return (
@@ -110,7 +174,9 @@ def calculate_user_stats(transactions):
     )
 
 
-def calculate_global_stats(active_user_stats):
+def calculate_global_stats(
+    active_user_stats: List[Tuple[int, int]]
+) -> Tuple[int, int, float, float]:
     """
     Calculate global stats based on active user stats, including min, max, average, and median.
     """
@@ -128,7 +194,7 @@ def calculate_global_stats(active_user_stats):
     )
 
 
-def remove_outliers(data):
+def remove_outliers(data: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
     """
     Removes outliers from data using the interquartile range (IQR) and returns the filtered data.
     """
@@ -141,20 +207,18 @@ def remove_outliers(data):
     lower_bound = Q1 - outlier_step
     upper_bound = Q3 + outlier_step
 
-    filtered_data = [x for x in data if lower_bound < x[0] < upper_bound]
-
-    return filtered_data
+    return [x for x in data if lower_bound < x[0] < upper_bound]
 
 
 if __name__ == "__main__":
-    API_KEY = "JQJC8P87GIS8GKAZPAT7P92H634I4HSXMD"
-
     # 1. Get all user addressed across New York and Instanbul hackathons
-    to_addresses = merge_address_sets(API_KEY)
+    to_addresses = merge_address_sets()
     print(f"Merged addresses (total {len(to_addresses)}):", to_addresses)
 
-    # 2. Fetch the last 1,000 transactions for each address
-    transactions_per_address = fetch_transactions_for_addresses(to_addresses, API_KEY)
+    # 2. Fetch the last 1,000 transactions for each address on the provided chain
+    transactions_per_address = fetch_transactions_for_addresses(
+        to_addresses, Chains.GNOSIS
+    )
     print("Fetched transactions for each address.")
 
     # 3. Calculate statistics for those transactions
@@ -171,14 +235,15 @@ if __name__ == "__main__":
     min_global, max_global, global_average, global_median = calculate_global_stats(
         filtered_active_user_stats
     )
-    print("Min Global Transactions per Month (Active Users, No Outliers):", min_global)
-    print("Max Global Transactions per Month (Active Users, No Outliers):", max_global)
+    print("Number of accounts analyzed:", len(filtered_active_user_stats))
+    print("Min Global Transactions per Month:", min_global)
+    print("Max Global Transactions per Month:", max_global)
     print(
-        "Global Average Transactions per Month (Active Users, No Outliers):",
+        "Global Average Transactions per Month:",
         global_average,
     )
     print(
-        "Global Median Transactions per Month (Active Users, No Outliers):",
+        "Global Median Transactions per Month:",
         global_median,
     )
 
@@ -193,7 +258,7 @@ if __name__ == "__main__":
         color="skyblue",
         edgecolor="black",
     )
-    plt.title("Distribution of Average Transactions Per Month Per User (No Outliers)")
+    plt.title("Distribution of Average Transactions Per Month Per User (Gnosis)")
     plt.xlabel("Average Transactions Per Month")
     plt.ylabel("Number of Users")
     plt.grid(axis="y", alpha=0.75)
